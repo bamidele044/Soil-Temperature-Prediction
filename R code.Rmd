@@ -1,0 +1,445 @@
+---
+title: "DAT7303_1_4_2331634"
+author: "Bamidele Omotosho"
+date: "2024-05-03"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+# Loading libraries
+library(tidyverse)
+library(lubridate)
+library(forecast)
+library(ggplot2)
+library(gridExtra)
+library(corrplot)
+library(reshape2)
+library(dplyr)
+library(caret)
+library(rpart)
+library(tseries)
+library(e1071)
+library(randomForest)
+
+# Creating empty vector to store results
+datetime <- TSK <- PSFC <- U10 <- V10 <- Q2 <- RAINC <- RAINNC <- SNOW <- TSLB <-SMOIS <- c()
+
+# Loading of dataset
+getwd()
+setwd("c:\\temp\\project3")
+data <- read.csv("WRFdata_May2023.csv", header = TRUE)
+View(data)
+
+# Location selected
+lat <- "52.242"
+long <- "-7.4"
+
+# Finding the row indices of selected location
+indices <- which(data$X == lat & data$X.1 == long)
+
+# Extract 300 rows centered around the matched row
+start_index <- max(1, indices - 150)  # Ensure we don't go out of bounds
+end_index <- min(nrow(data), indices + 150)  # Ensure we don't go out of bounds
+selected_rows <- data[start_index:end_index, ]
+
+# 300 chosen dataset around the chosen location
+data <- data.frame(selected_rows)
+# New dataset
+View(data)
+
+# Structure of the dataset
+str(data)
+#View the dataset
+head(data)
+View(data)
+# Summary statistics
+summary(data)
+
+# Convert all columns to numeric except the lat and long (the first two columns)
+data <- cbind(data[, 1:2], as.data.frame(lapply(data[, -(1:2)], as.numeric)))
+View(data)
+
+# Check for missing values
+missing_values <- sum(is.na(data))
+print(missing_values)
+
+# Replace NA values with column means
+data <- cbind(data[, 1:2], as.data.frame(apply(data[, -c(1, 2)], 2, function(x) replace(x, is.na(x), mean(x, na.rm = TRUE)))))
+
+# Structure of the dataset
+View(data)
+str(data)
+
+# Check for missing values after mean imputation
+missing_values_ami <- sum(is.na(data[,-c(1, 2)]))
+print(missing_values_ami)
+
+# Performing univariate analysis on the dataset
+
+# Histogram of Skin temperature
+hist(data$X01.05.2018.00.00, main= "Histogram of Skin temperature at X01.05.2018.00.00", xlab = "Skin temperature")
+
+
+# Histogram of Surface pressure
+hist(data$X.2, main= "Histogram of Surface pressure at X01.05.2018.00.00", xlab = "Surface pressure")
+
+# Histogram of X component of wind at 10m
+hist(data$X.3, main= "Histogram of X component of wind at 10m at X01.05.2018.00.00", xlab = "X component of wind at 10m")
+
+# Histogram of Y component of wind at 10m 
+hist(data$X.4, main= "Histogram of Y component of wind at 10m at X01.05.2018.00.00", xlab = "Y component of wind at 10m")
+
+# Histogram of 2- meter specific humidity 
+hist(data$X.5, main= "Histogram of 2- meter specific humidity at X01.05.2018.00.00", xlab = "2- meter specific humidity")
+
+# Histogram of Convective rain (Accumulated precipitation)  
+hist(data$X.6, main= "Histogram of Convective rain (Accumulated precipitation) at X01.05.2018.00.00", xlab = "Convective rain (Accumulated precipitation)")
+
+# Histogram of Non-convective rain 
+hist(data$X.7, main= "Histogram of Non-convective rain at X01.05.2018.00.00", xlab = "Non-convective rain")
+
+# Histogram of Snow water equivalent
+hist(data$X.8, main= "Histogram of Snow water equivalent at X01.05.2018.00.00", xlab = "Snow water equivalent")
+
+# Histogram of Soil temperature 
+hist(data$X.9, main= "Histogram of Soil temperature at X01.05.2018.00.00", xlab = "Soil temperature")
+
+# Histogram of Soil Moisture
+hist(data$X.10, main= "Histogram of Soil Moisture at X01.05.2018.00.00", xlab = "Soil Moisture")
+
+# Performing Univariate
+# Correlation matrix of the data
+
+# Correlation matrix of the data
+cor_matrix <- cor(data[, c("X01.05.2018.00.00", "X.2", "X.3", "X.4", "X.5", "X.6", "X.7", "X.8", "X.9", "X.10")])
+
+# Reshape correlation matrix for ggplot
+correlation_df <- melt(cor_matrix)
+
+# Plot correlation matrix using ggplot2
+correlation_plot <- ggplot(correlation_df, aes(x = Var1, y = Var2)) +
+  geom_tile(aes(fill = value), color = "black") +
+  geom_text(aes(label = round(value, 2)), color = "black", size = 3) +
+  scale_fill_gradient2(low = "yellow", mid = "orange", high = "green", midpoint = 0,
+                       limits = c(-1, 1), name = "Correlation") +
+  labs(title = "Correlation Matrix Plot", x = "", y = "") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
+        axis.text.y = element_text(size = 8),
+        panel.grid = element_blank())
+print(correlation_plot)
+
+
+# Extract location you want to work with 
+data <- data %>%
+  filter(X == lat & X.1 == long)
+
+# Number of columns of the dataset  
+i <- ncol(data)
+
+# create a new dataset by extracting by sequnce of 10 intervals
+data <- data.frame(
+  TSK = as.numeric(data[,seq(from = 3, to = i, by = 10)]),
+  PSFC = as.integer(data[,seq(from = 4, to = i, by = 10)]),
+  U10 = as.numeric(data[,seq(from = 5, to = i, by = 10)]),
+  V10 = as.numeric(data[,seq(from = 6, to = i, by = 10)]),
+  Q2 = as.numeric(data[,seq(from = 7, to = i, by = 10)]),
+  RAINC = as.numeric(data[,seq(from = 8, to = i, by = 10)]),
+  RAINNC = as.numeric(data[,seq(from = 9, to = i, by = 10)]),
+  SNOW = as.numeric(data[,seq(from = 10, to = i, by = 10)]),
+  TSLB = as.numeric(data[,seq(from = 11, to = i, by = 10)]),
+  SMOIS = as.numeric(data[,seq(from = 12, to = i, by = 10)]),
+  DATETIME = seq(as.POSIXct("2018-05-01 00:00:00"), as.POSIXct("2018-05-31 21:00:00"), by = "3 hour")
+)
+
+
+# Preprocess dataset
+data <- data %>%
+  select(DATETIME, TSLB)
+
+# Display the first row of the dataset
+head(data)
+
+# Summary statistics
+summary(data$TSLB)
+
+# Time series plot before performing lag
+ggplot(data, aes(x = DATETIME, y = TSLB)) +
+  geom_line(color = "blue") +
+  labs(title = "Soil temperature Over Time",
+       x = "Date and Time",
+       y = "Soil temperature") +
+  theme_minimal()
+
+# Create a variable to represent time
+data <- data %>%
+  mutate(TIME = as.numeric(difftime(DATETIME, min(DATETIME), units = "hours")))
+View(data)
+
+# Perform ADF test before performing lag
+adf_result1 <- adf.test(data$TSLB)
+View(data)
+# Print the result
+print(adf_result1)
+
+# Take first order difference
+data <- data %>%
+  mutate(TSLB_lag1 = c(0, diff(data$TSLB, lag = 1)))
+
+# Perform ADF test after performing lag
+adf_result2 <- adf.test(na.omit(data$TSLB_lag1))
+
+# Print the result
+print(adf_result2)
+# Print the stationary data
+View(data)
+
+# Time series plot after performing lag
+ggplot(data, aes(x = DATETIME, y = TSLB_lag1)) +
+  geom_line(color = "blue") +
+  labs(title = "Soil temperature Over Time",
+       x = "Date and Time",
+       y = "Soil temperature") +
+  theme_minimal()
+
+# Splitting the data into training and test sets
+set.seed(123)
+train_indices <- sample(1:nrow(data), 0.7 * nrow(data))
+train_data <- data[train_indices, ]
+test_data <- data[-train_indices, ]
+str(train_data)
+str(test_data)
+
+
+# Linear regression model
+# Fitting linear regression model on the training set
+model_lm <- lm(TSLB_lag1 ~ TIME, data = train_data)
+summary(model_lm)
+# Predict TSLB_lag1 values for the test set
+predictions_lm <- predict(model_lm, newdata = test_data)
+# Calculate the root mean squared error (RMSE)
+rmse_lm <- sqrt(mean((data$TSLB_lag1 - predictions_lm)^2))
+
+# SVR model radial
+# Fitting SVR model on the training set using kernel = radial
+model_svr_radial <- svm(TSLB_lag1 ~ TIME, data = train_data, kernel = "radial")
+# Display the SVR model summary
+summary(model_svr_radial)
+# Predict Surface pressure values for the test set using the SVR model
+predictions_svr_radial <- predict(model_svr_radial, newdata = test_data)
+# Calculate the root mean squared error (RMSE) for the SVR model
+rmse_svr_radial <- sqrt(mean((data$TSLB_lag1 - predictions_svr_radial)^2))
+
+# SVR model linear
+# Fit a SVR model on the training set using kernel = linear
+model_svr_linear <- svm(TSLB_lag1 ~ TIME, data = train_data, kernel = "linear")
+# Display the SVR model summary
+summary(model_svr_linear)
+# Predict Soil temperature values for the test set using the SVR model
+predictions_svr_linear <- predict(model_svr_linear, newdata = test_data)
+# Calculate the root mean squared error (RMSE) for the SVR model
+rmse_svr_linear <- sqrt(mean((data$TSLB_lag1 - predictions_svr_linear)^2))
+
+# SVR model poly
+# Fitting SVR model on the training set using kernel = poly
+model_svr_poly <- svm(TSLB_lag1 ~ TIME, data = train_data, kernel = "poly")
+# Display the SVR model summary
+summary(model_svr_poly)
+# Predict Soil temperature values for the test set using the SVR model
+predictions_svr_poly <- predict(model_svr_poly, newdata = test_data)
+# Calculate the root mean squared error (RMSE) for the SVR model
+rmse_svr_poly <- sqrt(mean((data$TSLB_lag1 - predictions_svr_poly)^2))
+
+# DT model 
+# Fitting DT model on the training set
+model_dt <- rpart(TSLB_lag1 ~ TIME, data = train_data)
+# Display the SVR model summary
+summary(model_dt)
+# Predict Soil temperature values for the test set using the SVR model
+predictions_dt <- predict(model_dt, newdata = test_data)
+# Calculate the root mean squared error (RMSE) for the SVR model
+rmse_dt <- sqrt(mean((data$TSLB_lag1 - predictions_dt)^2))
+
+# RF n100 model
+# Fitting RF n100 model on the training set
+model_rf_n100 <- randomForest(TSLB_lag1 ~ TIME, data = train_data, ntree=100)
+# Display the SVR model summary
+summary(model_rf_n100)
+# Predict Soil temperature values for the test set using the SVR model
+predictions_rf_n100 <- predict(model_rf_n100, newdata = test_data)
+# Calculate the root mean squared error (RMSE) for the SVR model
+rmse_rf_n100 <- sqrt(mean((data$TSLB_lag1 - predictions_rf_n100)^2))
+
+# RF n200 model
+# Fitting RF n200 model on the training set
+model_rf_n200 <- randomForest(TSLB_lag1 ~ TIME, data = train_data, ntree=200)
+# Display the SVR model summary
+summary(model_rf_n200)
+# Predict Soil temperature values for the test set using the SVR model
+predictions_rf_n200 <- predict(model_rf_n200, newdata = test_data)
+# Calculate the root mean squared error (RMSE) for the SVR model
+rmse_rf_n200 <- sqrt(mean((data$TSLB_lag1 - predictions_rf_n200)^2))
+
+# RF n500 model
+# Fitting RF n500 model on the training set
+model_rf_n500 <- randomForest(TSLB_lag1 ~ TIME, data = train_data, ntree=500)
+# Display the SVR model summary
+summary(model_rf_n500)
+# Predict Soil temperature values for the test set using the SVR model
+predictions_rf_n500 <- predict(model_rf_n500, newdata = test_data)
+# Calculate the root mean squared error (RMSE) for the SVR model
+rmse_rf_n500 <- sqrt(mean((data$TSLB_lag1 - predictions_rf_n500)^2))
+
+# Plotting the actual vs predicted values for the Linear Regression, SVR, Random Forest and ARIMA model
+p1 <- ggplot() +
+  geom_point(data = test_data, aes(x = TSLB_lag1, y = predictions_lm), color = "blue") +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "Linear Regression: Actual vs. Predicted Soil Temperature",
+       x = "Actual Soil Temperature",
+       y = "Predicted Soil Temperature") +
+  theme_minimal()
+
+p2 <- ggplot() +
+  geom_point(data = test_data, aes(x = TSLB_lag1, y = predictions_svr_radial), color = "blue") +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "SVR RBF: Actual vs. Predicted Soil Temperature",
+       x = "Actual Soil Temperature",
+       y = "Predicted Soil Temperature") +
+  theme_minimal()
+
+p3 <- ggplot() +
+  geom_point(data = test_data, aes(x = TSLB_lag1, y = predictions_svr_linear), color = "blue") +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "SVR LINEAR: Actual vs. Predicted Soil Temperature",
+       x = "Actual Soil Temperature",
+       y = "Predicted Soil Temperature") +
+  theme_minimal()
+
+p4 <- ggplot() +
+  geom_point(data = test_data, aes(x = TSLB_lag1, y = predictions_svr_poly), color = "blue") +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "SVR POLY: Actual vs. Predicted Soil Temperature",
+       x = "Actual Soil Temperature",
+       y = "Predicted Soil Temperature") +
+  theme_minimal()
+
+p5 <- ggplot() +
+  geom_point(data = test_data, aes(x = TSLB_lag1, y = predictions_dt), color = "blue") +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "DT: Actual vs. Predicted Soil Temperature",
+       x = "Actual Soil Temperature",
+       y = "Predicted Soil Temperature") +
+  theme_minimal()
+
+p6 <- ggplot() +
+  geom_point(data = test_data, aes(x = TSLB_lag1, y = predictions_rf_n100), color = "blue") +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "RF n100: Actual vs. Predicted Soil Temperature",
+       x = "Actual Soil Temperature",
+       y = "Predicted Soil Temperature") +
+  theme_minimal()
+
+p7 <- ggplot() +
+  geom_point(data = test_data, aes(x = TSLB_lag1, y = predictions_rf_n200), color = "blue") +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "RF n200: Actual vs. Predicted Soil Temperature",
+       x = "Actual Soil Temperature",
+       y = "Predicted Soil Temperature") +
+  theme_minimal()
+
+p8 <- ggplot() +
+  geom_point(data = test_data, aes(x = TSLB_lag1, y = predictions_rf_n500), color = "blue") +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "RF n500: Actual vs. Predicted Soil Temperature",
+       x = "Actual Soil Temperature",
+       y = "Predicted Soil Temperature") +
+  theme_minimal()
+
+grid.arrange(p1, p2, p3, p4, p5, p6, p7, p8, ncol = 8)
+
+# ARIMA model
+# Determining the number of hours in the dataset
+n_hours <- nrow(data)
+# Converting the dataset to a time series object
+TSLB_lag1_ts <- ts(data$TSLB_lag1, start = c(2018, 5), frequency = 8 * 31)
+View(TSLB_lag1_ts)
+# Splitting data into training and testing sets
+train_end_idx <- as.integer(n_hours * 0.7)
+train_data <- TSLB_lag1_ts[1:train_end_idx]
+test_data <- TSLB_lag1_ts[(train_end_idx + 1):n_hours]
+str(train_data)
+str(test_data)
+
+# Fitting the ARIMA model
+arima_model <- auto.arima(train_data, seasonal = TRUE, stepwise = TRUE)
+# Forecasting using the ARIMA model
+arima_forecast <- forecast(arima_model, h = length(test_data))
+print(arima_model)
+#Calculating the Root Mean Squared Error (RMSE)
+rmse_arima <- sqrt(mean((test_data - arima_forecast$mean)^2))
+
+# Model diagnostic for ARIMA model
+checkresiduals(arima_model)
+#Plot histogram of residuals
+hist(arima_model$residuals, main = "Histogram of ARIMA Model Residuals", xlab = "Residuals", col = "green")
+
+# Outputs
+cat(missing_values)
+cat("missing values before mean imputation:", missing_values)
+cat("missing values after mean imputation:", missing_values_ami)
+cat("RMSE linear modelmodel_rmse_df:", rmse_lm)
+cat("RMSE SVR RADIAL:", rmse_svr_radial)
+cat("RMSE SVR LINEAR:", rmse_svr_linear)
+cat("RMSE SVR POLY:", rmse_svr_poly)
+cat("RMSE DT:", rmse_dt)
+cat("RMSE RF n100:", rmse_rf_n100)
+cat("RMSE RF n200:", rmse_rf_n200)
+cat("RMSE RF n500:", rmse_rf_n500)
+cat("RMSE ARIMA Model:", rmse_arima)
+
+
+# Plot Barplot Model
+Models <- c(2.517296, 2.519932, 2.520215, 2.525582, 2.608039, 2.92076, 2.959271, 2.9418, 2.600654)
+data <- data.frame(
+  Models = c("LM", "svr_rbt", "svr_linear", "svr_poly", "DT", "rf_n100", "rf_n200", "rf_n500", "ARIMA"),
+  RMSE = Models
+)
+  
+ggplot(data, aes(x = Models, y = RMSE)) +
+  geom_bar(stat = "identity", fill = "green") +
+  geom_text(aes(label = round(RMSE, 2)), vjust = -0.5, size = 3.5) + 
+  labs(title = "RSME",
+       x = "RMSE",
+       y = "Values")
+
+
+
+
+
+
+
+
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
